@@ -34,6 +34,30 @@ function worker(): Worker {
 }
 
 describe("REST API", () => {
+  it("tolerates json posts with an empty body", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/workflows/approval/runs",
+      payload: { input: { item: "x" } },
+    });
+    const runId = created.json().id as string;
+
+    const emptyBody = await app.inject({
+      method: "POST",
+      url: `/api/runs/${runId}/cancel`,
+      headers: { "content-type": "application/json" },
+    });
+    expect(emptyBody.statusCode).toBe(202);
+
+    const brokenJson = await app.inject({
+      method: "POST",
+      url: "/api/workflows/approval/runs",
+      headers: { "content-type": "application/json" },
+      payload: "{not json",
+    });
+    expect(brokenJson.statusCode).toBe(400);
+  });
+
   it("serves the web ui at the root", async () => {
     const res = await app.inject({ method: "GET", url: "/" });
     expect(res.statusCode).toBe(200);

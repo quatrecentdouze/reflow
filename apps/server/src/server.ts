@@ -44,9 +44,31 @@ const createScheduleBody = z
 export function buildServer({ store, logger = false }: BuildServerOptions): FastifyInstance {
   const app = Fastify({ logger });
 
+  app.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (_req, body, done) => {
+      if (body === "" || body === undefined) {
+        done(null, undefined);
+        return;
+      }
+      try {
+        done(null, JSON.parse(body as string));
+      } catch {
+        done(Object.assign(new Error("invalid json body"), { statusCode: 400 }));
+      }
+    },
+  );
+
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof z.ZodError) {
       return reply.status(400).send({ error: "invalid request", issues: err.issues });
+    }
+    const httpError = err as { statusCode?: number; message?: string };
+    if (typeof httpError.statusCode === "number" && httpError.statusCode < 500) {
+      return reply
+        .status(httpError.statusCode)
+        .send({ error: httpError.message ?? "bad request" });
     }
     app.log.error(err);
     return reply.status(500).send({ error: "internal error" });
