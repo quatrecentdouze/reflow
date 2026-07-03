@@ -185,6 +185,22 @@ export class PostgresStore implements WorkflowStore {
     );
   }
 
+  async retryRun(runId: WorkflowRunId): Promise<boolean> {
+    const run = await this.getRun(runId);
+    if (!run || run.status !== "failed") {
+      return false;
+    }
+    await this.appendEvent(runId, { type: "run_retried" });
+    await this.db.query(
+      `UPDATE workflow_runs
+       SET status = 'pending', error = NULL, wake_at = NULL,
+           locked_by = NULL, locked_until = NULL, updated_at = now()
+       WHERE id = $1 AND status = 'failed'`,
+      [runId],
+    );
+    return true;
+  }
+
   async signalRun(
     runId: WorkflowRunId,
     name: string,

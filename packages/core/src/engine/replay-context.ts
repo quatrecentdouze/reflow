@@ -84,6 +84,11 @@ export class ReplayContext implements WorkflowContext {
         this.signalsByName.set(event.name, list);
         break;
       }
+      case "run_retried":
+        for (const state of this.ops.values()) {
+          if (!state.completion) state.failures = [];
+        }
+        break;
       default:
         break;
     }

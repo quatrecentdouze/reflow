@@ -16,6 +16,7 @@ export type HistoryEvent =
   | { type: "value_recorded"; opIndex: number; kind: "now" | "random"; value: unknown }
   | { type: "child_started"; opIndex: number; childRunId: string; workflowName: string }
   | { type: "signal_received"; name: string; payload: unknown }
+  | { type: "run_retried" }
   | { type: "run_completed"; output: unknown }
   | { type: "run_failed"; error: string };
 

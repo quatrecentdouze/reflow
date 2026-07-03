@@ -73,6 +73,19 @@ export function buildServer({ store, logger = false }: BuildServerOptions): Fast
     return serializeRun(run);
   });
 
+  app.post("/api/runs/:id/retry", async (req, reply) => {
+    const { id } = req.params as { id: string };
+
+    const run = await store.getRun(id);
+    if (!run) return reply.status(404).send({ error: "run not found" });
+    if (run.status !== "failed") {
+      return reply.status(409).send({ error: "only failed runs can be retried" });
+    }
+
+    await store.retryRun(id);
+    return reply.status(202).send({ retried: true });
+  });
+
   app.post("/api/runs/:id/signals/:name", async (req, reply) => {
     const { id, name } = req.params as { id: string; name: string };
     const body = signalBody.parse(req.body ?? {});
