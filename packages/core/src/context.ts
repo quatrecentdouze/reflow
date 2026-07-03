@@ -17,4 +17,8 @@ export interface WorkflowContext {
   sleep(ms: number): Promise<void>;
 
   waitForSignal<T = unknown>(name: string): Promise<T>;
+
+  now(): Promise<Date>;
+
+  random(): Promise<number>;
 }

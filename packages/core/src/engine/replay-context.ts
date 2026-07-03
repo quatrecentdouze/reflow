@@ -14,7 +14,8 @@ interface StepFailure {
 interface OpState {
   completion?:
     | { kind: "step"; stepId: string; result: unknown }
-    | { kind: "timer" };
+    | { kind: "timer" }
+    | { kind: "value"; valueKind: "now" | "random"; value: unknown };
   timerStartedAt?: string;
   failures: StepFailure[];
 }
@@ -56,6 +57,13 @@ export class ReplayContext implements WorkflowContext {
         break;
       case "timer_fired":
         this.op(event.opIndex).completion = { kind: "timer" };
+        break;
+      case "value_recorded":
+        this.op(event.opIndex).completion = {
+          kind: "value",
+          valueKind: event.kind,
+          value: event.value,
+        };
         break;
       case "signal_received": {
         const list = this.signalsByName.get(event.name) ?? [];
@@ -168,6 +176,37 @@ export class ReplayContext implements WorkflowContext {
     throw new Suspension(wakeAt);
   }
 
+  async now(): Promise<Date> {
+    const value = await this.recordValue("now", () => new Date().toISOString());
+    return new Date(value as string);
+  }
+
+  async random(): Promise<number> {
+    const value = await this.recordValue("random", () => Math.random());
+    return value as number;
+  }
+
+  private async recordValue(
+    kind: "now" | "random",
+    produce: () => unknown,
+  ): Promise<unknown> {
+    const opIndex = this.opCounter++;
+    const op = this.ops.get(opIndex);
+
+    if (op?.completion) {
+      if (op.completion.kind !== "value" || op.completion.valueKind !== kind) {
+        throw new NondeterminismError(
+          `operation #${opIndex}: history records ${describeCompletion(op.completion)} but code executed ${kind}()`,
+        );
+      }
+      return op.completion.value;
+    }
+
+    const value = produce();
+    await this.append({ type: "value_recorded", opIndex, kind, value });
+    return value;
+  }
+
   async waitForSignal<T = unknown>(name: string): Promise<T> {
     this.opCounter++;
     const received = this.signalsByName.get(name) ?? [];
@@ -183,5 +222,7 @@ export class ReplayContext implements WorkflowContext {
 }
 
 function describeCompletion(completion: NonNullable<OpState["completion"]>): string {
-  return completion.kind === "step" ? `step "${completion.stepId}"` : "a timer";
+  if (completion.kind === "step") return `step "${completion.stepId}"`;
+  if (completion.kind === "value") return `a recorded ${completion.valueKind}() value`;
+  return "a timer";
 }

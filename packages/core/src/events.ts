@@ -13,6 +13,7 @@ export type HistoryEvent =
     }
   | { type: "timer_started"; opIndex: number; wakeAt: string }
   | { type: "timer_fired"; opIndex: number }
+  | { type: "value_recorded"; opIndex: number; kind: "now" | "random"; value: unknown }
   | { type: "signal_received"; name: string; payload: unknown }
   | { type: "run_completed"; output: unknown }
   | { type: "run_failed"; error: string };
