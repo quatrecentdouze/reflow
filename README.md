@@ -42,6 +42,8 @@ pnpm install
 pnpm demo
 ```
 
+open http://localhost:3000 for the web ui, it shows every run with its live status and full event history, failed runs get a retry button
+
 then in another terminal
 
 ```bash
@@ -84,6 +86,48 @@ curl -X POST http://localhost:3000/api/workflows/expense-approval/runs \
 curl -X POST http://localhost:3000/api/runs/<RUN_ID>/signals/decision \
      -H "content-type: application/json" \
      -d '{"payload": {"approved": true, "reviewer": "grace"}}'
+```
+
+## more primitives
+
+child workflows, a parent can spawn other workflows and await their result, if the parent crashes and resumes the children are not restarted
+
+```ts
+export const batchNotify = defineWorkflow({
+  name: "batch-notify",
+  async run(ctx, input: { userIds: string[]; message: string }) {
+    let notified = 0;
+    for (const userId of input.userIds) {
+      const result = await ctx.child<{ delivered: boolean }>("notify-user", {
+        userId,
+        message: input.message,
+      });
+      if (result.delivered) notified += 1;
+    }
+    return { notified };
+  },
+});
+```
+
+deterministic time and randomness, `Date.now()` and `Math.random()` would break replay so the context records them once and replays the same value forever
+
+```ts
+const stamp = await ctx.now();
+const jitter = await ctx.random();
+```
+
+scheduled starts, pass `startAt` when creating a run and it stays asleep until due
+
+```bash
+curl -X POST http://localhost:3000/api/workflows/order-processing/runs \
+     -H "content-type: application/json" \
+     -d '{"input": {"orderId": "order-2", "amount": 50}, "startAt": "2026-07-04T09:00:00Z"}'
+```
+
+retry for dead runs, when a run exhausted its retries and failed you can retry it later, completed steps stay replayed, only the failed part re-executes
+
+```bash
+curl -X POST http://localhost:3000/api/runs/<RUN_ID>/retry
 ```
 
 ## how it works
@@ -140,13 +184,15 @@ the engine only knows the `WorkflowStore` interface, storage is pluggable. the p
 
 ## api
 
-| Method | Path                              | Description                          |
-|--------|-----------------------------------|--------------------------------------|
-| POST   | `/api/workflows/:name/runs`       | start a run (`{ input }`)            |
-| GET    | `/api/runs`                       | list runs (`?status=`, `?limit=`)    |
-| GET    | `/api/runs/:id`                   | run state (`?include=history`)       |
-| POST   | `/api/runs/:id/signals/:name`     | deliver a signal (`{ payload }`)     |
-| GET    | `/health`                         | health check                         |
+| Method | Path                              | Description                              |
+|--------|-----------------------------------|------------------------------------------|
+| GET    | `/`                               | web ui                                   |
+| POST   | `/api/workflows/:name/runs`       | start a run (`{ input, startAt? }`)      |
+| GET    | `/api/runs`                       | list runs (`?status=`, `?limit=`)        |
+| GET    | `/api/runs/:id`                   | run state (`?include=history`)           |
+| POST   | `/api/runs/:id/signals/:name`     | deliver a signal (`{ payload }`)         |
+| POST   | `/api/runs/:id/retry`             | retry a failed run                       |
+| GET    | `/health`                         | health check                             |
 
 ## guarantees and limits
 
@@ -157,12 +203,15 @@ the engine only knows the `WorkflowStore` interface, storage is pluggable. the p
 
 ## roadmap
 
+- [x] deterministic `ctx.now()` / `ctx.random()`
+- [x] child workflows
+- [x] scheduled runs (`startAt`)
+- [x] web ui for run histories
+- [x] dead letter handling, retry failed runs
 - [ ] workflow versioning
-- [ ] deterministic `ctx.now()` / `ctx.random()`
-- [ ] child workflows
-- [ ] cron / scheduled runs
-- [ ] web ui for run histories
-- [ ] dead letter handling and manual replay
+- [ ] cron / recurring runs
+- [ ] cancellation
+- [ ] opentelemetry tracing
 
 ## dev
 
