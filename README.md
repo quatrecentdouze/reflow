@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/quatrecentdouze/reflow/actions/workflows/ci.yml/badge.svg)](https://github.com/quatrecentdouze/reflow/actions/workflows/ci.yml)
 
-durable workflow engine for typescript, built on postgres. you write multi step processes as plain async code and reflow persists every step, so it survives crashes, retries failures, can sleep for days and wait for human input. basically a mini temporal
+durable workflow engine for typescript, built on postgres. write multi step processes as plain async code, reflow persists every step so it survives crashes, retries failures, sleeps for days and waits for human input. a mini temporal
 
 ```ts
 export const orderProcessing = defineWorkflow({
@@ -16,8 +16,6 @@ export const orderProcessing = defineWorkflow({
       { retry: { maxAttempts: 5, initialDelayMs: 3_000, backoffFactor: 2 } },
     );
 
-    await ctx.step("ship-order", () => shipping.dispatch(input.orderId));
-
     await ctx.sleep(7 * 24 * 3_600_000);
 
     await ctx.step("send-follow-up-email", () => emails.followUp(input.orderId));
@@ -27,203 +25,48 @@ export const orderProcessing = defineWorkflow({
 });
 ```
 
-kill the worker anywhere in this workflow then restart it. execution resumes exactly where it stopped, completed steps are not re-executed, they get replayed from history
+kill the worker mid run then restart it, execution resumes exactly where it stopped. every durable operation is recorded in an append only event history, and a worker resuming a run re-executes the function against that history: recorded steps return their stored result instantly, execution continues live from the first unrecorded one. deterministic replay, thats the whole trick
 
 ![reflow web ui](docs/ui.png)
 
-## why
+## features
 
-every backend ends up with processes that outlive a single request. payment flows, onboarding, report pipelines, approval chains. the usual fix is a pile of queues, cron jobs and state columns that reimplement half an orchestrator badly. reflow gives you the actual primitive, durable execution. your process is code, its progress is data
+- durable steps with retries and exponential backoff
+- durable timers, sleep for a week across restarts and deploys
+- signals for human in the loop, with optional timeouts
+- child workflows
+- workflow versioning, ship new code while old runs are in flight
+- scheduled and recurring runs, fixed interval or cron
+- cancellation, and retry of runs that exhausted their retries
+- deterministic `ctx.now()` / `ctx.random()`
+- scale by starting more workers, coordination via `FOR UPDATE SKIP LOCKED`, dead workers detected by lock heartbeats and their runs taken over
+- web ui with live statuses and event histories
 
 ## quick start
 
-needs node 22+ and pnpm. no docker, no db setup, the demo runs an embedded postgres (pglite) in process
+needs node 22+ and pnpm, no docker, the demo embeds postgres (pglite) in process
 
 ```bash
 pnpm install
 pnpm demo
 ```
 
-open http://localhost:3000 for the web ui, it shows every run with its live status and full event history, failed runs get a retry button
-
-then in another terminal
+open http://localhost:3000 for the ui, then
 
 ```bash
-# start an order workflow, the payment gateway is flaky on purpose, watch the retries in the logs
 curl -X POST http://localhost:3000/api/workflows/order-processing/runs \
      -H "content-type: application/json" \
      -d '{"input": {"orderId": "order-1", "amount": 99}}'
-
-# inspect the run and its full event history
-curl "http://localhost:3000/api/runs/<RUN_ID>?include=history"
 ```
 
-## real setup, postgres + separate processes
+for the real thing, postgres + separate server and worker processes
 
 ```bash
 docker compose up -d
-pnpm install && pnpm build
-
+pnpm build
 pnpm --filter @reflow/server start   # terminal 1
 pnpm --filter @reflow/worker start   # terminal 2
 ```
-
-### the durability demo
-
-1. start an order-processing run (curl above)
-2. watch the worker logs, reserve-inventory completes, charge-payment starts retrying
-3. kill the worker mid run, ctrl+c or `kill -9`
-4. restart it. the run resumes at the exact step where it stopped
-
-you can also start several workers, they coordinate through `FOR UPDATE SKIP LOCKED` claiming so a run is never executed twice, and runs owned by a dead worker get picked up once its lock expires
-
-### human in the loop
-
-```bash
-curl -X POST http://localhost:3000/api/workflows/expense-approval/runs \
-     -H "content-type: application/json" \
-     -d '{"input": {"employee": "ada", "amount": 1200, "reason": "conference"}}'
-
-# the run now sleeps, for minutes or weeks, until someone decides
-curl -X POST http://localhost:3000/api/runs/<RUN_ID>/signals/decision \
-     -H "content-type: application/json" \
-     -d '{"payload": {"approved": true, "reviewer": "grace"}}'
-```
-
-## more primitives
-
-child workflows, a parent can spawn other workflows and await their result, if the parent crashes and resumes the children are not restarted
-
-```ts
-export const batchNotify = defineWorkflow({
-  name: "batch-notify",
-  async run(ctx, input: { userIds: string[]; message: string }) {
-    let notified = 0;
-    for (const userId of input.userIds) {
-      const result = await ctx.child<{ delivered: boolean }>("notify-user", {
-        userId,
-        message: input.message,
-      });
-      if (result.delivered) notified += 1;
-    }
-    return { notified };
-  },
-});
-```
-
-deterministic time and randomness, `Date.now()` and `Math.random()` would break replay so the context records them once and replays the same value forever
-
-```ts
-const stamp = await ctx.now();
-const jitter = await ctx.random();
-```
-
-scheduled starts, pass `startAt` when creating a run and it stays asleep until due
-
-```bash
-curl -X POST http://localhost:3000/api/workflows/order-processing/runs \
-     -H "content-type: application/json" \
-     -d '{"input": {"orderId": "order-2", "amount": 50}, "startAt": "2026-07-04T09:00:00Z"}'
-```
-
-retry for dead runs, when a run exhausted its retries and failed you can retry it later, completed steps stay replayed, only the failed part re-executes
-
-```bash
-curl -X POST http://localhost:3000/api/runs/<RUN_ID>/retry
-```
-
-cancellation, pending and sleeping runs stop immediately, running ones stop at their next durable operation
-
-```bash
-curl -X POST http://localhost:3000/api/runs/<RUN_ID>/cancel
-```
-
-recurring schedules, fixed interval or cron expression, claimed with the same skip locked trick so multiple workers never double-spawn
-
-```bash
-curl -X POST http://localhost:3000/api/workflows/order-processing/schedules \
-     -H "content-type: application/json" \
-     -d '{"input": {"orderId": "recurring", "amount": 10}, "intervalMs": 3600000}'
-
-curl -X POST http://localhost:3000/api/workflows/order-processing/schedules \
-     -H "content-type: application/json" \
-     -d '{"input": {"orderId": "weekly", "amount": 10}, "cron": "0 9 * * 1"}'
-```
-
-signal timeouts, wait for a human decision but not forever
-
-```ts
-const decision = await ctx.waitForSignal<Decision>("decision", { timeoutMs: 86_400_000 });
-if (!decision.received) {
-  await ctx.step("escalate", () => notifyManager());
-}
-```
-
-workflow versioning, change your workflow code while old runs are still in flight. wrap the change in a version gate, old histories replay the old path, new runs record the new version and take the new path
-
-```ts
-steps.push(await ctx.step("step-a", () => stepA()));
-if ((await ctx.version("insert-step-c", 1)) >= 1) {
-  steps.push(await ctx.step("step-c", () => stepC()));
-}
-steps.push(await ctx.step("step-b", () => stepB()));
-```
-
-## how it works
-
-every durable operation (`step`, `sleep`, `waitForSignal`) is recorded in an append only event history
-
-| seq | event            | payload                                        |
-|-----|------------------|------------------------------------------------|
-| 0   | `run_started`    | `{ orderId: "order-1", amount: 99 }`           |
-| 1   | `step_completed` | `reserve-inventory` -> `{ reserved: true }`    |
-| 2   | `step_failed`    | `charge-payment`, attempt 1, retry at +3s      |
-| 3   | `step_failed`    | `charge-payment`, attempt 2, retry at +6s      |
-| 4   | `step_completed` | `charge-payment` -> `{ chargeId: "ch_3c02" }`  |
-| 5   | `timer_started`  | wake at +7 days                                |
-
-when a worker picks up a run it re-executes the workflow function from the top against this history. operations already recorded return their stored result instantly, no side effects, and execution continues live from the first unrecorded operation. thats deterministic replay, the whole trick behind durable execution
-
-heres what it looks like live in the ui, the flaky payment gateway failing twice before the durable timer kicks in
-
-![run history with retries](docs/ui-retries.png)
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant S as API Server
-    participant P as Postgres
-    participant W as Worker
-
-    C->>S: POST /api/workflows/order-processing/runs
-    S->>P: INSERT run (pending)
-    W->>P: claim (FOR UPDATE SKIP LOCKED)
-    W->>W: replay history, execute next step
-    W->>P: append step_completed
-    Note over W: worker crashes 💥
-    W->>P: another worker claims (lock expired)
-    W->>W: replay: steps 1..n returned from history
-    W->>W: execution resumes at step n+1
-    W->>P: run completed
-```
-
-one consequence, workflow code must be deterministic outside of steps. no `Date.now()`, no `Math.random()`, no raw i/o in the workflow body, put that stuff inside `ctx.step()`. if code and history diverge, like a step renamed while runs are in flight, reflow fails the run with a `NondeterminismError` instead of corrupting state
-
-## architecture
-
-```
-packages/
-  core            engine: replay executor, worker runtime, contracts (zero runtime deps)
-  sdk             workflow authoring api (defineWorkflow)
-  store-postgres  WorkflowStore implementation, works on pg and pglite
-  examples        demo workflows
-apps/
-  server          rest api (fastify + zod)
-  worker          worker process
-  demo            single process demo on embedded postgres
-```
-
-the engine only knows the `WorkflowStore` interface, storage is pluggable. the postgres implementation takes anything with a `query()` method, thats how the test suite runs the real store on an embedded postgres with zero infra, in ci too
 
 ## api
 
@@ -241,41 +84,24 @@ the engine only knows the `WorkflowStore` interface, storage is pluggable. the p
 | GET    | `/api/schedules`                  | list schedules                           |
 | DELETE | `/api/schedules/:id`              | delete a schedule                        |
 | POST   | `/api/maintenance/purge`          | delete finished runs (`{ olderThanMs }`) |
-| GET    | `/health`                         | health check                             |
 
-## guarantees and limits
+## architecture
 
-- steps are at least once. a crash after a side effect but before its recorded means the step runs again on resume, make your steps idempotent
-- one worker per run at a time, lock claiming + heartbeats, expired locks (dead workers) get taken over automatically
-- inputs, outputs and step results must be json serializable
-- this is a learning grade engine, not a temporal replacement. no partitioned event store, no exactly once semantics, single-region only
+```
+packages/core            engine: replay executor, worker runtime (zero deps)
+packages/sdk             workflow authoring api
+packages/store-postgres  storage, works on pg and pglite
+apps/server              rest api + web ui (fastify)
+apps/worker              worker process
+apps/demo                single process demo
+```
 
-## roadmap
-
-- [x] deterministic `ctx.now()` / `ctx.random()`
-- [x] child workflows
-- [x] scheduled runs (`startAt`)
-- [x] web ui for run histories
-- [x] dead letter handling, retry failed runs
-- [x] workflow versioning
-- [x] recurring runs, fixed interval and cron expressions
-- [x] cancellation
-- [x] signal timeouts
-- [x] history pagination and retention purge
-- [ ] opentelemetry tracing
-- [ ] workflow queues and priorities
-- [ ] client sdk package published to npm
+two rules to know. workflow code must be deterministic outside of steps, put side effects, `Date.now()` and `Math.random()` inside `ctx.step()` or use the ctx helpers. and steps are at least once, a crash between a side effect and its recording means the step runs again on resume, so make them idempotent
 
 ## dev
 
 ```bash
-pnpm install
-pnpm build
-pnpm test        # engine + api tests on embedded postgres
+pnpm test    # 50+ tests against an embedded postgres, no infra needed
 ```
-
-to regenerate the readme screenshots, run `pnpm demo` then `node scripts/capture-ui.mjs` in another terminal
-
-## license
 
 [MIT](./LICENSE)
