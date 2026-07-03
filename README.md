@@ -29,6 +29,8 @@ export const orderProcessing = defineWorkflow({
 
 kill the worker anywhere in this workflow then restart it. execution resumes exactly where it stopped, completed steps are not re-executed, they get replayed from history
 
+![reflow web ui](docs/ui.png)
+
 ## why
 
 every backend ends up with processes that outlive a single request. payment flows, onboarding, report pipelines, approval chains. the usual fix is a pile of queues, cron jobs and state columns that reimplement half an orchestrator badly. reflow gives you the actual primitive, durable execution. your process is code, its progress is data
@@ -182,6 +184,10 @@ every durable operation (`step`, `sleep`, `waitForSignal`) is recorded in an app
 
 when a worker picks up a run it re-executes the workflow function from the top against this history. operations already recorded return their stored result instantly, no side effects, and execution continues live from the first unrecorded operation. thats deterministic replay, the whole trick behind durable execution
 
+heres what it looks like live in the ui, the flaky payment gateway failing twice before the durable timer kicks in
+
+![run history with retries](docs/ui-retries.png)
+
 ```mermaid
 sequenceDiagram
     participant C as Client
@@ -267,6 +273,8 @@ pnpm install
 pnpm build
 pnpm test        # engine + api tests on embedded postgres
 ```
+
+to regenerate the readme screenshots, run `pnpm demo` then `node scripts/capture-ui.mjs` in another terminal
 
 ## license
 

@@ -19,6 +19,7 @@
     "@reflow/server": "workspace:*",
     "@reflow/store-postgres": "workspace:*",
     "@types/node": "^24.0.0",
+    "playwright": "^1.61.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.9"
   }
