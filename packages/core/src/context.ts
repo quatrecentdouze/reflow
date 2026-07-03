@@ -9,6 +9,10 @@ export interface StepOptions {
   retry?: RetryPolicy;
 }
 
+export type SignalWaitResult<T> =
+  | { received: true; payload: T }
+  | { received: false };
+
 export interface WorkflowContext {
   readonly runId: string;
 
@@ -17,6 +21,11 @@ export interface WorkflowContext {
   sleep(ms: number): Promise<void>;
 
   waitForSignal<T = unknown>(name: string): Promise<T>;
+
+  waitForSignal<T = unknown>(
+    name: string,
+    options: { timeoutMs: number },
+  ): Promise<SignalWaitResult<T>>;
 
   now(): Promise<Date>;
 

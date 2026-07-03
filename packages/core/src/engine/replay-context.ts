@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { StepOptions, WorkflowContext } from "../context.js";
+import type { SignalWaitResult, StepOptions, WorkflowContext } from "../context.js";
 import type { HistoryEvent, HistoryRecord } from "../events.js";
 import {
   ChildWorkflowFailedError,
@@ -11,6 +11,8 @@ import {
 import type { WorkflowStore } from "../store.js";
 import { computeRetryDelayMs } from "./backoff.js";
 import { Suspension } from "./suspension.js";
+
+const NO_SIGNAL = Symbol("no-signal");
 
 interface StepFailure {
   attempt: number;
@@ -310,18 +312,54 @@ export class ReplayContext implements WorkflowContext {
     return maxVersion;
   }
 
-  async waitForSignal<T = unknown>(name: string): Promise<T> {
+  async waitForSignal<T = unknown>(name: string): Promise<T>;
+  async waitForSignal<T = unknown>(
+    name: string,
+    options: { timeoutMs: number },
+  ): Promise<SignalWaitResult<T>>;
+  async waitForSignal<T = unknown>(
+    name: string,
+    options?: { timeoutMs: number },
+  ): Promise<T | SignalWaitResult<T>> {
     this.assertNotCancelled();
-    this.opCounter++;
-    const received = this.signalsByName.get(name) ?? [];
-    const cursor = this.signalCursor.get(name) ?? 0;
+    const opIndex = this.opCounter++;
+    const op = this.ops.get(opIndex);
 
-    if (cursor < received.length) {
-      this.signalCursor.set(name, cursor + 1);
-      return received[cursor] as T;
+    if (options === undefined) {
+      const payload = this.consumeSignal(name);
+      if (payload !== NO_SIGNAL) return payload as T;
+      throw new Suspension(null);
     }
 
-    throw new Suspension(null);
+    if (op?.completion?.kind === "timer") {
+      return { received: false };
+    }
+
+    const payload = this.consumeSignal(name);
+    if (payload !== NO_SIGNAL) {
+      return { received: true, payload: payload as T };
+    }
+
+    if (op?.timerStartedAt !== undefined) {
+      const wakeAt = new Date(op.timerStartedAt);
+      if (wakeAt.getTime() <= Date.now()) {
+        await this.append({ type: "timer_fired", opIndex });
+        return { received: false };
+      }
+      throw new Suspension(wakeAt);
+    }
+
+    const wakeAt = new Date(Date.now() + options.timeoutMs);
+    await this.append({ type: "timer_started", opIndex, wakeAt: wakeAt.toISOString() });
+    throw new Suspension(wakeAt);
+  }
+
+  private consumeSignal(name: string): unknown {
+    const received = this.signalsByName.get(name) ?? [];
+    const cursor = this.signalCursor.get(name) ?? 0;
+    if (cursor >= received.length) return NO_SIGNAL;
+    this.signalCursor.set(name, cursor + 1);
+    return received[cursor];
   }
 }
 
