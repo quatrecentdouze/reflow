@@ -130,6 +130,30 @@ retry for dead runs, when a run exhausted its retries and failed you can retry i
 curl -X POST http://localhost:3000/api/runs/<RUN_ID>/retry
 ```
 
+cancellation, pending and sleeping runs stop immediately, running ones stop at their next durable operation
+
+```bash
+curl -X POST http://localhost:3000/api/runs/<RUN_ID>/cancel
+```
+
+recurring schedules, spawn a run every n milliseconds, claimed with the same skip locked trick so multiple workers never double-spawn
+
+```bash
+curl -X POST http://localhost:3000/api/workflows/order-processing/schedules \
+     -H "content-type: application/json" \
+     -d '{"input": {"orderId": "recurring", "amount": 10}, "intervalMs": 3600000}'
+```
+
+workflow versioning, change your workflow code while old runs are still in flight. wrap the change in a version gate, old histories replay the old path, new runs record the new version and take the new path
+
+```ts
+steps.push(await ctx.step("step-a", () => stepA()));
+if ((await ctx.version("insert-step-c", 1)) >= 1) {
+  steps.push(await ctx.step("step-c", () => stepC()));
+}
+steps.push(await ctx.step("step-b", () => stepB()));
+```
+
 ## how it works
 
 every durable operation (`step`, `sleep`, `waitForSignal`) is recorded in an append only event history
@@ -192,6 +216,10 @@ the engine only knows the `WorkflowStore` interface, storage is pluggable. the p
 | GET    | `/api/runs/:id`                   | run state (`?include=history`)           |
 | POST   | `/api/runs/:id/signals/:name`     | deliver a signal (`{ payload }`)         |
 | POST   | `/api/runs/:id/retry`             | retry a failed run                       |
+| POST   | `/api/runs/:id/cancel`            | cancel a run                             |
+| POST   | `/api/workflows/:name/schedules`  | create a schedule (`{ input, intervalMs }`) |
+| GET    | `/api/schedules`                  | list schedules                           |
+| DELETE | `/api/schedules/:id`              | delete a schedule                        |
 | GET    | `/health`                         | health check                             |
 
 ## guarantees and limits
@@ -199,7 +227,7 @@ the engine only knows the `WorkflowStore` interface, storage is pluggable. the p
 - steps are at least once. a crash after a side effect but before its recorded means the step runs again on resume, make your steps idempotent
 - one worker per run at a time, lock claiming + heartbeats, expired locks (dead workers) get taken over automatically
 - inputs, outputs and step results must be json serializable
-- this is a learning grade engine, not a temporal replacement. no versioning, no partitioned event store, no exactly once semantics
+- this is a learning grade engine, not a temporal replacement. no partitioned event store, no exactly once semantics, single-region only
 
 ## roadmap
 
@@ -208,9 +236,11 @@ the engine only knows the `WorkflowStore` interface, storage is pluggable. the p
 - [x] scheduled runs (`startAt`)
 - [x] web ui for run histories
 - [x] dead letter handling, retry failed runs
-- [ ] workflow versioning
-- [ ] cron / recurring runs
-- [ ] cancellation
+- [x] workflow versioning
+- [x] recurring runs (fixed interval)
+- [x] cancellation
+- [ ] cron expressions for schedules
+- [ ] event history pagination and archiving
 - [ ] opentelemetry tracing
 
 ## dev
