@@ -33,7 +33,10 @@ export interface WorkflowStore {
   getRun(id: WorkflowRunId): Promise<WorkflowRun | null>;
   listRuns(options?: ListRunsOptions): Promise<WorkflowRun[]>;
 
-  getHistory(runId: WorkflowRunId): Promise<HistoryRecord[]>;
+  getHistory(
+    runId: WorkflowRunId,
+    options?: { offset?: number | undefined; limit?: number | undefined },
+  ): Promise<HistoryRecord[]>;
   appendEvent(runId: WorkflowRunId, event: HistoryEvent): Promise<void>;
 
   claimRun(workerId: string, lockTtlMs: number): Promise<WorkflowRun | null>;
@@ -60,4 +63,6 @@ export interface WorkflowStore {
   deleteSchedule(id: string): Promise<boolean>;
 
   claimDueSchedule(): Promise<WorkflowSchedule | null>;
+
+  purgeFinishedRuns(olderThan: Date): Promise<number>;
 }

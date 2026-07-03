@@ -66,11 +66,17 @@ export class PostgresStore implements WorkflowStore {
     return rows.map(mapRun);
   }
 
-  async getHistory(runId: WorkflowRunId): Promise<HistoryRecord[]> {
+  async getHistory(
+    runId: WorkflowRunId,
+    options: { offset?: number | undefined; limit?: number | undefined } = {},
+  ): Promise<HistoryRecord[]> {
+    const offset = options.offset ?? 0;
+    const limit = options.limit ?? null;
     const { rows } = await this.db.query(
       `SELECT run_id, seq, payload, recorded_at FROM workflow_events
-       WHERE run_id = $1 ORDER BY seq ASC`,
-      [runId],
+       WHERE run_id = $1 ORDER BY seq ASC
+       OFFSET $2 LIMIT $3`,
+      [runId, offset, limit],
     );
     return rows.map((row) => {
       const r = row as Record<string, unknown>;
@@ -239,6 +245,17 @@ export class PostgresStore implements WorkflowStore {
       [runId],
     );
     await this.wakeParent(runId);
+  }
+
+  async purgeFinishedRuns(olderThan: Date): Promise<number> {
+    const { rows } = await this.db.query(
+      `DELETE FROM workflow_runs
+       WHERE status IN ('completed', 'failed', 'cancelled')
+         AND updated_at < $1::timestamptz
+       RETURNING id`,
+      [olderThan.toISOString()],
+    );
+    return rows.length;
   }
 
   async createSchedule(input: CreateScheduleInput): Promise<WorkflowSchedule> {

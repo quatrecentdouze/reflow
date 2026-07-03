@@ -23,6 +23,13 @@ const listRunsQuery = z.object({
 const getRunQuery = z.object({
   include: z.literal("history").optional(),
 });
+const historyQuery = z.object({
+  offset: z.coerce.number().int().min(0).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+});
+const purgeBody = z.object({
+  olderThanMs: z.number().int().min(0),
+});
 const createScheduleBody = z
   .object({
     input: z.unknown().optional(),
@@ -86,6 +93,35 @@ export function buildServer({ store, logger = false }: BuildServerOptions): Fast
       };
     }
     return serializeRun(run);
+  });
+
+  app.get("/api/runs/:id/history", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const query = historyQuery.parse(req.query);
+
+    const run = await store.getRun(id);
+    if (!run) return reply.status(404).send({ error: "run not found" });
+
+    const history = await store.getHistory(id, {
+      offset: query.offset,
+      limit: query.limit ?? 100,
+    });
+    return {
+      runId: id,
+      offset: query.offset ?? 0,
+      count: history.length,
+      events: history.map((h) => ({
+        seq: h.seq,
+        recordedAt: h.recordedAt.toISOString(),
+        ...h.event,
+      })),
+    };
+  });
+
+  app.post("/api/maintenance/purge", async (req, reply) => {
+    const body = purgeBody.parse(req.body ?? {});
+    const purged = await store.purgeFinishedRuns(new Date(Date.now() - body.olderThanMs));
+    return reply.status(200).send({ purged });
   });
 
   app.post("/api/runs/:id/retry", async (req, reply) => {
