@@ -96,6 +96,7 @@ function serializeRun(run: import("@reflow/core").WorkflowRun) {
     output: run.output,
     error: run.error,
     wakeAt: run.wakeAt?.toISOString() ?? null,
+    parentRunId: run.parentRunId,
     createdAt: run.createdAt.toISOString(),
     updatedAt: run.updatedAt.toISOString(),
   };

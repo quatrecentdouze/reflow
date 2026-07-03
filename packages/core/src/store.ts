@@ -6,6 +6,7 @@ export interface CreateRunInput {
   workflowName: string;
   input: unknown;
   startAt?: Date | undefined;
+  parentRunId?: WorkflowRunId | undefined;
 }
 
 export interface ListRunsOptions {

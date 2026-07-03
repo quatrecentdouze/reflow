@@ -10,7 +10,7 @@ import type {
 import type { SqlClient } from "./sql-client.js";
 
 const RUN_COLUMNS = `id, workflow_name, status, input, output, error,
-  wake_at, locked_by, locked_until, created_at, updated_at`;
+  wake_at, parent_run_id, locked_by, locked_until, created_at, updated_at`;
 
 export class PostgresStore implements WorkflowStore {
   constructor(private readonly db: SqlClient) {}
@@ -19,8 +19,8 @@ export class PostgresStore implements WorkflowStore {
     const startAt = input.startAt ?? null;
     const scheduled = startAt !== null && startAt.getTime() > Date.now();
     const { rows } = await this.db.query(
-      `INSERT INTO workflow_runs (id, workflow_name, input, status, wake_at)
-       VALUES ($1, $2, $3::jsonb, $4, $5::timestamptz)
+      `INSERT INTO workflow_runs (id, workflow_name, input, status, wake_at, parent_run_id)
+       VALUES ($1, $2, $3::jsonb, $4, $5::timestamptz, $6)
        RETURNING ${RUN_COLUMNS}`,
       [
         input.id,
@@ -28,6 +28,7 @@ export class PostgresStore implements WorkflowStore {
         JSON.stringify(input.input ?? null),
         scheduled ? "sleeping" : "pending",
         scheduled ? startAt.toISOString() : null,
+        input.parentRunId ?? null,
       ],
     );
     await this.appendEvent(input.id, { type: "run_started", input: input.input ?? null });
@@ -160,6 +161,7 @@ export class PostgresStore implements WorkflowStore {
        WHERE id = $1`,
       [runId, JSON.stringify(output ?? null)],
     );
+    await this.wakeParent(runId);
   }
 
   async failRun(runId: WorkflowRunId, error: string): Promise<void> {
@@ -169,6 +171,17 @@ export class PostgresStore implements WorkflowStore {
            locked_by = NULL, locked_until = NULL, updated_at = now()
        WHERE id = $1`,
       [runId, error],
+    );
+    await this.wakeParent(runId);
+  }
+
+  private async wakeParent(childRunId: WorkflowRunId): Promise<void> {
+    await this.db.query(
+      `UPDATE workflow_runs
+       SET wake_at = LEAST(COALESCE(wake_at, now()), now()), updated_at = now()
+       WHERE id = (SELECT parent_run_id FROM workflow_runs WHERE id = $1)
+         AND status IN ('pending', 'running', 'sleeping')`,
+      [childRunId],
     );
   }
 
@@ -208,6 +221,7 @@ function mapRun(row: unknown): WorkflowRun {
     output: r["output"] ?? null,
     error: (r["error"] as string | null) ?? null,
     wakeAt: toDate(r["wake_at"]),
+    parentRunId: (r["parent_run_id"] as string | null) ?? null,
     lockedBy: (r["locked_by"] as string | null) ?? null,
     lockedUntil: toDate(r["locked_until"]),
     createdAt: toDate(r["created_at"])!,

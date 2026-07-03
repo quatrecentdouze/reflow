@@ -18,6 +18,18 @@ export class StepFailedError extends Error {
   }
 }
 
+export class ChildWorkflowFailedError extends Error {
+  override readonly name = "ChildWorkflowFailedError";
+
+  constructor(
+    readonly workflowName: string,
+    readonly childRunId: string,
+    readonly childError: string,
+  ) {
+    super(`child workflow "${workflowName}" (run ${childRunId}) failed: ${childError}`);
+  }
+}
+
 export function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);

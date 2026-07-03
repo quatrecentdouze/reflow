@@ -15,6 +15,7 @@ export interface WorkflowRun {
   output: unknown;
   error: string | null;
   wakeAt: Date | null;
+  parentRunId: WorkflowRunId | null;
   lockedBy: string | null;
   lockedUntil: Date | null;
   createdAt: Date;

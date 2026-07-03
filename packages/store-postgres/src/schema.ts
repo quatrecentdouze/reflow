@@ -9,11 +9,13 @@ export const MIGRATION_STATEMENTS: readonly string[] = [
     output JSONB,
     error TEXT,
     wake_at TIMESTAMPTZ,
+    parent_run_id UUID,
     locked_by TEXT,
     locked_until TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  `ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS parent_run_id UUID`,
   `CREATE INDEX IF NOT EXISTS idx_workflow_runs_claim
     ON workflow_runs (status, wake_at, created_at)`,
   `CREATE TABLE IF NOT EXISTS workflow_events (

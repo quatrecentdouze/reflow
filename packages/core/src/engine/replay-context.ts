@@ -1,6 +1,12 @@
+import { randomUUID } from "node:crypto";
 import type { StepOptions, WorkflowContext } from "../context.js";
 import type { HistoryEvent, HistoryRecord } from "../events.js";
-import { NondeterminismError, StepFailedError, errorMessage } from "../errors.js";
+import {
+  ChildWorkflowFailedError,
+  NondeterminismError,
+  StepFailedError,
+  errorMessage,
+} from "../errors.js";
 import type { WorkflowStore } from "../store.js";
 import { computeRetryDelayMs } from "./backoff.js";
 import { Suspension } from "./suspension.js";
@@ -17,6 +23,7 @@ interface OpState {
     | { kind: "timer" }
     | { kind: "value"; valueKind: "now" | "random"; value: unknown };
   timerStartedAt?: string;
+  childStarted?: { childRunId: string; workflowName: string };
   failures: StepFailure[];
 }
 
@@ -63,6 +70,12 @@ export class ReplayContext implements WorkflowContext {
           kind: "value",
           valueKind: event.kind,
           value: event.value,
+        };
+        break;
+      case "child_started":
+        this.op(event.opIndex).childStarted = {
+          childRunId: event.childRunId,
+          workflowName: event.workflowName,
         };
         break;
       case "signal_received": {
@@ -205,6 +218,48 @@ export class ReplayContext implements WorkflowContext {
     const value = produce();
     await this.append({ type: "value_recorded", opIndex, kind, value });
     return value;
+  }
+
+  async child<T = unknown>(workflowName: string, input: unknown = null): Promise<T> {
+    const opIndex = this.opCounter++;
+    const op = this.ops.get(opIndex);
+
+    if (op?.completion) {
+      throw new NondeterminismError(
+        `operation #${opIndex}: history records ${describeCompletion(op.completion)} but code executed child "${workflowName}"`,
+      );
+    }
+
+    let childRunId: string;
+    if (op?.childStarted) {
+      if (op.childStarted.workflowName !== workflowName) {
+        throw new NondeterminismError(
+          `operation #${opIndex}: history records child "${op.childStarted.workflowName}" but code executed child "${workflowName}"`,
+        );
+      }
+      childRunId = op.childStarted.childRunId;
+    } else {
+      childRunId = randomUUID();
+      await this.store.createRun({
+        id: childRunId,
+        workflowName,
+        input,
+        parentRunId: this.runId,
+      });
+      await this.append({ type: "child_started", opIndex, childRunId, workflowName });
+    }
+
+    const child = await this.store.getRun(childRunId);
+    if (!child) {
+      throw new Error(`child run ${childRunId} not found`);
+    }
+    if (child.status === "completed") {
+      return child.output as T;
+    }
+    if (child.status === "failed") {
+      throw new ChildWorkflowFailedError(workflowName, childRunId, child.error ?? "unknown error");
+    }
+    throw new Suspension(null);
   }
 
   async waitForSignal<T = unknown>(name: string): Promise<T> {

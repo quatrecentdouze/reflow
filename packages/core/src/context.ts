@@ -21,4 +21,6 @@ export interface WorkflowContext {
   now(): Promise<Date>;
 
   random(): Promise<number>;
+
+  child<T = unknown>(workflowName: string, input?: unknown): Promise<T>;
 }
