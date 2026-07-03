@@ -1,5 +1,10 @@
 import type { HistoryEvent, HistoryRecord } from "./events.js";
-import type { WorkflowRun, WorkflowRunId, WorkflowRunStatus } from "./types.js";
+import type {
+  WorkflowRun,
+  WorkflowRunId,
+  WorkflowRunStatus,
+  WorkflowSchedule,
+} from "./types.js";
 
 export interface CreateRunInput {
   id: WorkflowRunId;
@@ -12,6 +17,14 @@ export interface CreateRunInput {
 export interface ListRunsOptions {
   status?: WorkflowRunStatus | undefined;
   limit?: number | undefined;
+}
+
+export interface CreateScheduleInput {
+  id: string;
+  workflowName: string;
+  input: unknown;
+  intervalMs: number;
+  firstRunAt?: Date | undefined;
 }
 
 export interface WorkflowStore {
@@ -38,4 +51,12 @@ export interface WorkflowStore {
   cancelRun(runId: WorkflowRunId): Promise<boolean>;
 
   markRunCancelled(runId: WorkflowRunId): Promise<void>;
+
+  createSchedule(input: CreateScheduleInput): Promise<WorkflowSchedule>;
+
+  listSchedules(): Promise<WorkflowSchedule[]>;
+
+  deleteSchedule(id: string): Promise<boolean>;
+
+  claimDueSchedule(): Promise<WorkflowSchedule | null>;
 }

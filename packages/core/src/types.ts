@@ -8,6 +8,17 @@ export type WorkflowRunStatus =
   | "failed"
   | "cancelled";
 
+export interface WorkflowSchedule {
+  id: string;
+  workflowName: string;
+  input: unknown;
+  intervalMs: number;
+  nextRunAt: Date;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface WorkflowRun {
   id: WorkflowRunId;
   workflowName: string;

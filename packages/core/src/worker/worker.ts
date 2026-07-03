@@ -60,6 +60,8 @@ export class Worker {
   }
 
   async tick(): Promise<ExecutionOutcome | null> {
+    await this.spawnDueScheduledRuns();
+
     const run = await this.store.claimRun(this.workerId, this.lockTtlMs);
     if (!run) return null;
 
@@ -78,6 +80,18 @@ export class Worker {
       return outcome;
     } finally {
       clearInterval(heartbeat);
+    }
+  }
+
+  private async spawnDueScheduledRuns(): Promise<void> {
+    for (;;) {
+      const schedule = await this.store.claimDueSchedule();
+      if (!schedule) return;
+      await this.store.createRun({
+        id: randomUUID(),
+        workflowName: schedule.workflowName,
+        input: schedule.input,
+      });
     }
   }
 

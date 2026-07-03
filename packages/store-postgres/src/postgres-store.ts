@@ -1,16 +1,21 @@
 import type {
   CreateRunInput,
+  CreateScheduleInput,
   HistoryEvent,
   HistoryRecord,
   ListRunsOptions,
   WorkflowRun,
   WorkflowRunId,
+  WorkflowSchedule,
   WorkflowStore,
 } from "@reflow/core";
 import type { SqlClient } from "./sql-client.js";
 
 const RUN_COLUMNS = `id, workflow_name, status, input, output, error,
   wake_at, parent_run_id, locked_by, locked_until, created_at, updated_at`;
+
+const SCHEDULE_COLUMNS = `id, workflow_name, input, interval_ms, next_run_at,
+  enabled, created_at, updated_at`;
 
 export class PostgresStore implements WorkflowStore {
   constructor(private readonly db: SqlClient) {}
@@ -235,6 +240,57 @@ export class PostgresStore implements WorkflowStore {
     await this.wakeParent(runId);
   }
 
+  async createSchedule(input: CreateScheduleInput): Promise<WorkflowSchedule> {
+    const firstRunAt = input.firstRunAt ?? new Date();
+    const { rows } = await this.db.query(
+      `INSERT INTO workflow_schedules (id, workflow_name, input, interval_ms, next_run_at)
+       VALUES ($1, $2, $3::jsonb, $4, $5::timestamptz)
+       RETURNING ${SCHEDULE_COLUMNS}`,
+      [
+        input.id,
+        input.workflowName,
+        JSON.stringify(input.input ?? null),
+        input.intervalMs,
+        firstRunAt.toISOString(),
+      ],
+    );
+    return mapSchedule(rows[0]);
+  }
+
+  async listSchedules(): Promise<WorkflowSchedule[]> {
+    const { rows } = await this.db.query(
+      `SELECT ${SCHEDULE_COLUMNS} FROM workflow_schedules ORDER BY created_at DESC`,
+    );
+    return rows.map(mapSchedule);
+  }
+
+  async deleteSchedule(id: string): Promise<boolean> {
+    const { rows } = await this.db.query(
+      `DELETE FROM workflow_schedules WHERE id = $1 RETURNING id`,
+      [id],
+    );
+    return rows.length > 0;
+  }
+
+  async claimDueSchedule(): Promise<WorkflowSchedule | null> {
+    const { rows } = await this.db.query(
+      `WITH candidate AS (
+         SELECT id FROM workflow_schedules
+         WHERE enabled AND next_run_at <= now()
+         ORDER BY next_run_at
+         LIMIT 1
+         FOR UPDATE SKIP LOCKED
+       )
+       UPDATE workflow_schedules s
+       SET next_run_at = now() + (s.interval_ms * interval '1 millisecond'),
+           updated_at = now()
+       FROM candidate
+       WHERE s.id = candidate.id
+       RETURNING ${prefixedColumns("s", SCHEDULE_COLUMNS)}`,
+    );
+    return rows[0] ? mapSchedule(rows[0]) : null;
+  }
+
   async signalRun(
     runId: WorkflowRunId,
     name: string,
@@ -256,9 +312,28 @@ export class PostgresStore implements WorkflowStore {
 }
 
 function prefixed(alias: string): string {
-  return RUN_COLUMNS.split(",")
+  return prefixedColumns(alias, RUN_COLUMNS);
+}
+
+function prefixedColumns(alias: string, columns: string): string {
+  return columns
+    .split(",")
     .map((column) => `${alias}.${column.trim()}`)
     .join(", ");
+}
+
+function mapSchedule(row: unknown): WorkflowSchedule {
+  const r = row as Record<string, unknown>;
+  return {
+    id: r["id"] as string,
+    workflowName: r["workflow_name"] as string,
+    input: r["input"] ?? null,
+    intervalMs: Number(r["interval_ms"]),
+    nextRunAt: toDate(r["next_run_at"])!,
+    enabled: Boolean(r["enabled"]),
+    createdAt: toDate(r["created_at"])!,
+    updatedAt: toDate(r["updated_at"])!,
+  };
 }
 
 function mapRun(row: unknown): WorkflowRun {

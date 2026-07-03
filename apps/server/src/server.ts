@@ -23,6 +23,11 @@ const listRunsQuery = z.object({
 const getRunQuery = z.object({
   include: z.literal("history").optional(),
 });
+const createScheduleBody = z.object({
+  input: z.unknown().optional(),
+  intervalMs: z.number().int().min(100),
+  firstRunAt: z.iso.datetime({ offset: true }).optional(),
+});
 
 export function buildServer({ store, logger = false }: BuildServerOptions): FastifyInstance {
   const app = Fastify({ logger });
@@ -91,6 +96,31 @@ export function buildServer({ store, logger = false }: BuildServerOptions): Fast
     return reply.status(202).send({ retried: true });
   });
 
+  app.post("/api/workflows/:name/schedules", async (req, reply) => {
+    const { name } = req.params as { name: string };
+    const body = createScheduleBody.parse(req.body ?? {});
+    const schedule = await store.createSchedule({
+      id: randomUUID(),
+      workflowName: name,
+      input: body.input ?? null,
+      intervalMs: body.intervalMs,
+      firstRunAt: body.firstRunAt ? new Date(body.firstRunAt) : undefined,
+    });
+    return reply.status(201).send(serializeSchedule(schedule));
+  });
+
+  app.get("/api/schedules", async () => {
+    const schedules = await store.listSchedules();
+    return { schedules: schedules.map(serializeSchedule) };
+  });
+
+  app.delete("/api/schedules/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const deleted = await store.deleteSchedule(id);
+    if (!deleted) return reply.status(404).send({ error: "schedule not found" });
+    return reply.status(204).send();
+  });
+
   app.post("/api/runs/:id/cancel", async (req, reply) => {
     const { id } = req.params as { id: string };
 
@@ -116,6 +146,18 @@ export function buildServer({ store, logger = false }: BuildServerOptions): Fast
   });
 
   return app;
+}
+
+function serializeSchedule(schedule: import("@reflow/core").WorkflowSchedule) {
+  return {
+    id: schedule.id,
+    workflowName: schedule.workflowName,
+    input: schedule.input,
+    intervalMs: schedule.intervalMs,
+    nextRunAt: schedule.nextRunAt.toISOString(),
+    enabled: schedule.enabled,
+    createdAt: schedule.createdAt.toISOString(),
+  };
 }
 
 function serializeRun(run: import("@reflow/core").WorkflowRun) {
