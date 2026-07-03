@@ -136,12 +136,25 @@ cancellation, pending and sleeping runs stop immediately, running ones stop at t
 curl -X POST http://localhost:3000/api/runs/<RUN_ID>/cancel
 ```
 
-recurring schedules, spawn a run every n milliseconds, claimed with the same skip locked trick so multiple workers never double-spawn
+recurring schedules, fixed interval or cron expression, claimed with the same skip locked trick so multiple workers never double-spawn
 
 ```bash
 curl -X POST http://localhost:3000/api/workflows/order-processing/schedules \
      -H "content-type: application/json" \
      -d '{"input": {"orderId": "recurring", "amount": 10}, "intervalMs": 3600000}'
+
+curl -X POST http://localhost:3000/api/workflows/order-processing/schedules \
+     -H "content-type: application/json" \
+     -d '{"input": {"orderId": "weekly", "amount": 10}, "cron": "0 9 * * 1"}'
+```
+
+signal timeouts, wait for a human decision but not forever
+
+```ts
+const decision = await ctx.waitForSignal<Decision>("decision", { timeoutMs: 86_400_000 });
+if (!decision.received) {
+  await ctx.step("escalate", () => notifyManager());
+}
 ```
 
 workflow versioning, change your workflow code while old runs are still in flight. wrap the change in a version gate, old histories replay the old path, new runs record the new version and take the new path
@@ -214,12 +227,14 @@ the engine only knows the `WorkflowStore` interface, storage is pluggable. the p
 | POST   | `/api/workflows/:name/runs`       | start a run (`{ input, startAt? }`)      |
 | GET    | `/api/runs`                       | list runs (`?status=`, `?limit=`)        |
 | GET    | `/api/runs/:id`                   | run state (`?include=history`)           |
+| GET    | `/api/runs/:id/history`           | paged events (`?offset=`, `?limit=`)     |
 | POST   | `/api/runs/:id/signals/:name`     | deliver a signal (`{ payload }`)         |
 | POST   | `/api/runs/:id/retry`             | retry a failed run                       |
 | POST   | `/api/runs/:id/cancel`            | cancel a run                             |
-| POST   | `/api/workflows/:name/schedules`  | create a schedule (`{ input, intervalMs }`) |
+| POST   | `/api/workflows/:name/schedules`  | create a schedule (`{ input, intervalMs \| cron }`) |
 | GET    | `/api/schedules`                  | list schedules                           |
 | DELETE | `/api/schedules/:id`              | delete a schedule                        |
+| POST   | `/api/maintenance/purge`          | delete finished runs (`{ olderThanMs }`) |
 | GET    | `/health`                         | health check                             |
 
 ## guarantees and limits
@@ -237,11 +252,13 @@ the engine only knows the `WorkflowStore` interface, storage is pluggable. the p
 - [x] web ui for run histories
 - [x] dead letter handling, retry failed runs
 - [x] workflow versioning
-- [x] recurring runs (fixed interval)
+- [x] recurring runs, fixed interval and cron expressions
 - [x] cancellation
-- [ ] cron expressions for schedules
-- [ ] event history pagination and archiving
+- [x] signal timeouts
+- [x] history pagination and retention purge
 - [ ] opentelemetry tracing
+- [ ] workflow queues and priorities
+- [ ] client sdk package published to npm
 
 ## dev
 
