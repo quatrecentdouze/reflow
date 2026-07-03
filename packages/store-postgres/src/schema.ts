@@ -22,12 +22,15 @@ export const MIGRATION_STATEMENTS: readonly string[] = [
     id UUID PRIMARY KEY,
     workflow_name TEXT NOT NULL,
     input JSONB,
-    interval_ms INTEGER NOT NULL,
+    interval_ms INTEGER,
+    cron TEXT,
     next_run_at TIMESTAMPTZ NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  `ALTER TABLE workflow_schedules ADD COLUMN IF NOT EXISTS cron TEXT`,
+  `ALTER TABLE workflow_schedules ALTER COLUMN interval_ms DROP NOT NULL`,
   `CREATE INDEX IF NOT EXISTS idx_workflow_schedules_due
     ON workflow_schedules (enabled, next_run_at)`,
   `CREATE TABLE IF NOT EXISTS workflow_events (

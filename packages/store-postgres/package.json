@@ -15,6 +15,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@reflow/core": "workspace:*"
+    "@reflow/core": "workspace:*",
+    "cron-parser": "^5.6.1"
   }
 }

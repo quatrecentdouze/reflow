@@ -12,7 +12,8 @@ export interface WorkflowSchedule {
   id: string;
   workflowName: string;
   input: unknown;
-  intervalMs: number;
+  intervalMs: number | null;
+  cron: string | null;
   nextRunAt: Date;
   enabled: boolean;
   createdAt: Date;

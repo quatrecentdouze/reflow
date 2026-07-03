@@ -23,7 +23,8 @@ export interface CreateScheduleInput {
   id: string;
   workflowName: string;
   input: unknown;
-  intervalMs: number;
+  intervalMs?: number | undefined;
+  cron?: string | undefined;
   firstRunAt?: Date | undefined;
 }
 

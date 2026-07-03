@@ -23,11 +23,16 @@ const listRunsQuery = z.object({
 const getRunQuery = z.object({
   include: z.literal("history").optional(),
 });
-const createScheduleBody = z.object({
-  input: z.unknown().optional(),
-  intervalMs: z.number().int().min(100),
-  firstRunAt: z.iso.datetime({ offset: true }).optional(),
-});
+const createScheduleBody = z
+  .object({
+    input: z.unknown().optional(),
+    intervalMs: z.number().int().min(100).optional(),
+    cron: z.string().min(1).optional(),
+    firstRunAt: z.iso.datetime({ offset: true }).optional(),
+  })
+  .refine((body) => (body.intervalMs === undefined) !== (body.cron === undefined), {
+    message: "provide exactly one of intervalMs or cron",
+  });
 
 export function buildServer({ store, logger = false }: BuildServerOptions): FastifyInstance {
   const app = Fastify({ logger });
@@ -99,13 +104,21 @@ export function buildServer({ store, logger = false }: BuildServerOptions): Fast
   app.post("/api/workflows/:name/schedules", async (req, reply) => {
     const { name } = req.params as { name: string };
     const body = createScheduleBody.parse(req.body ?? {});
-    const schedule = await store.createSchedule({
-      id: randomUUID(),
-      workflowName: name,
-      input: body.input ?? null,
-      intervalMs: body.intervalMs,
-      firstRunAt: body.firstRunAt ? new Date(body.firstRunAt) : undefined,
-    });
+    let schedule;
+    try {
+      schedule = await store.createSchedule({
+        id: randomUUID(),
+        workflowName: name,
+        input: body.input ?? null,
+        intervalMs: body.intervalMs,
+        cron: body.cron,
+        firstRunAt: body.firstRunAt ? new Date(body.firstRunAt) : undefined,
+      });
+    } catch (err) {
+      return reply.status(400).send({
+        error: err instanceof Error ? err.message : "invalid schedule",
+      });
+    }
     return reply.status(201).send(serializeSchedule(schedule));
   });
 
@@ -154,6 +167,7 @@ function serializeSchedule(schedule: import("@reflow/core").WorkflowSchedule) {
     workflowName: schedule.workflowName,
     input: schedule.input,
     intervalMs: schedule.intervalMs,
+    cron: schedule.cron,
     nextRunAt: schedule.nextRunAt.toISOString(),
     enabled: schedule.enabled,
     createdAt: schedule.createdAt.toISOString(),

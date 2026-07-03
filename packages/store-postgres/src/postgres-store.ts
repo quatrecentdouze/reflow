@@ -9,12 +9,13 @@ import type {
   WorkflowSchedule,
   WorkflowStore,
 } from "@reflow/core";
+import { CronExpressionParser } from "cron-parser";
 import type { SqlClient } from "./sql-client.js";
 
 const RUN_COLUMNS = `id, workflow_name, status, input, output, error,
   wake_at, parent_run_id, locked_by, locked_until, created_at, updated_at`;
 
-const SCHEDULE_COLUMNS = `id, workflow_name, input, interval_ms, next_run_at,
+const SCHEDULE_COLUMNS = `id, workflow_name, input, interval_ms, cron, next_run_at,
   enabled, created_at, updated_at`;
 
 export class PostgresStore implements WorkflowStore {
@@ -241,16 +242,23 @@ export class PostgresStore implements WorkflowStore {
   }
 
   async createSchedule(input: CreateScheduleInput): Promise<WorkflowSchedule> {
-    const firstRunAt = input.firstRunAt ?? new Date();
+    const intervalMs = input.intervalMs ?? null;
+    const cron = input.cron ?? null;
+    if ((intervalMs === null) === (cron === null)) {
+      throw new Error("a schedule needs exactly one of intervalMs or cron");
+    }
+    const firstRunAt =
+      input.firstRunAt ?? (cron !== null ? nextCronOccurrence(cron) : new Date());
     const { rows } = await this.db.query(
-      `INSERT INTO workflow_schedules (id, workflow_name, input, interval_ms, next_run_at)
-       VALUES ($1, $2, $3::jsonb, $4, $5::timestamptz)
+      `INSERT INTO workflow_schedules (id, workflow_name, input, interval_ms, cron, next_run_at)
+       VALUES ($1, $2, $3::jsonb, $4, $5, $6::timestamptz)
        RETURNING ${SCHEDULE_COLUMNS}`,
       [
         input.id,
         input.workflowName,
         JSON.stringify(input.input ?? null),
-        input.intervalMs,
+        intervalMs,
+        cron,
         firstRunAt.toISOString(),
       ],
     );
@@ -282,13 +290,29 @@ export class PostgresStore implements WorkflowStore {
          FOR UPDATE SKIP LOCKED
        )
        UPDATE workflow_schedules s
-       SET next_run_at = now() + (s.interval_ms * interval '1 millisecond'),
+       SET next_run_at = CASE
+             WHEN s.interval_ms IS NOT NULL
+               THEN now() + (s.interval_ms * interval '1 millisecond')
+             ELSE now() + interval '1 minute'
+           END,
            updated_at = now()
        FROM candidate
        WHERE s.id = candidate.id
        RETURNING ${prefixedColumns("s", SCHEDULE_COLUMNS)}`,
     );
-    return rows[0] ? mapSchedule(rows[0]) : null;
+    if (!rows[0]) return null;
+
+    const schedule = mapSchedule(rows[0]);
+    if (schedule.cron !== null) {
+      const nextRunAt = nextCronOccurrence(schedule.cron);
+      await this.db.query(
+        `UPDATE workflow_schedules SET next_run_at = $2::timestamptz, updated_at = now()
+         WHERE id = $1`,
+        [schedule.id, nextRunAt.toISOString()],
+      );
+      schedule.nextRunAt = nextRunAt;
+    }
+    return schedule;
   }
 
   async signalRun(
@@ -328,12 +352,17 @@ function mapSchedule(row: unknown): WorkflowSchedule {
     id: r["id"] as string,
     workflowName: r["workflow_name"] as string,
     input: r["input"] ?? null,
-    intervalMs: Number(r["interval_ms"]),
+    intervalMs: r["interval_ms"] === null ? null : Number(r["interval_ms"]),
+    cron: (r["cron"] as string | null) ?? null,
     nextRunAt: toDate(r["next_run_at"])!,
     enabled: Boolean(r["enabled"]),
     createdAt: toDate(r["created_at"])!,
     updatedAt: toDate(r["updated_at"])!,
   };
+}
+
+export function nextCronOccurrence(expression: string, from: Date = new Date()): Date {
+  return CronExpressionParser.parse(expression, { currentDate: from }).next().toDate();
 }
 
 function mapRun(row: unknown): WorkflowRun {

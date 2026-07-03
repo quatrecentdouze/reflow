@@ -82,6 +82,56 @@ describe("recurring schedules", () => {
     expect(await ts.store.deleteSchedule(schedule.id)).toBe(false);
   });
 
+  it("spawns runs from a cron expression", async () => {
+    const schedule = await ts.store.createSchedule({
+      id: randomUUID(),
+      workflowName: "heartbeat-report",
+      input: { tag: "cron-expr" },
+      cron: "* * * * * *",
+    });
+    expect(schedule.cron).toBe("* * * * * *");
+    expect(schedule.intervalMs).toBeNull();
+    expect(schedule.nextRunAt.getTime()).toBeGreaterThan(Date.now() - 1_000);
+
+    const worker = new Worker(
+      { store: ts.store, registry },
+      { workerId: "cron-scheduler", pollIntervalMs: 50 },
+    );
+    worker.start();
+
+    try {
+      await waitFor(
+        async () => (await ts.store.listRuns({ status: "completed" })).length >= 2,
+        { timeoutMs: 10_000 },
+      );
+    } finally {
+      await worker.stop();
+    }
+
+    const [schedules] = await ts.store.listSchedules();
+    expect(schedules?.nextRunAt.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("rejects schedules with both or neither trigger", async () => {
+    await expect(
+      ts.store.createSchedule({
+        id: randomUUID(),
+        workflowName: "heartbeat-report",
+        input: null,
+        intervalMs: 1_000,
+        cron: "* * * * *",
+      }),
+    ).rejects.toThrow("exactly one");
+
+    await expect(
+      ts.store.createSchedule({
+        id: randomUUID(),
+        workflowName: "heartbeat-report",
+        input: null,
+      }),
+    ).rejects.toThrow("exactly one");
+  });
+
   it("manages schedules through the API", async () => {
     const app = buildServer({ store: ts.store });
 
@@ -104,6 +154,33 @@ describe("recurring schedules", () => {
       payload: { intervalMs: 1 },
     });
     expect(tooFast.statusCode).toBe(400);
+
+    const cronSchedule = await app.inject({
+      method: "POST",
+      url: "/api/workflows/heartbeat-report/schedules",
+      payload: { cron: "0 9 * * 1" },
+    });
+    expect(cronSchedule.statusCode).toBe(201);
+    expect(cronSchedule.json().cron).toBe("0 9 * * 1");
+
+    const badCron = await app.inject({
+      method: "POST",
+      url: "/api/workflows/heartbeat-report/schedules",
+      payload: { cron: "not a cron" },
+    });
+    expect(badCron.statusCode).toBe(400);
+
+    const bothTriggers = await app.inject({
+      method: "POST",
+      url: "/api/workflows/heartbeat-report/schedules",
+      payload: { intervalMs: 1_000, cron: "* * * * *" },
+    });
+    expect(bothTriggers.statusCode).toBe(400);
+
+    await app.inject({
+      method: "DELETE",
+      url: `/api/schedules/${cronSchedule.json().id}`,
+    });
 
     const deleted = await app.inject({
       method: "DELETE",
