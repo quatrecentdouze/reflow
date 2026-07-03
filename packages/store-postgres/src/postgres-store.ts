@@ -16,11 +16,19 @@ export class PostgresStore implements WorkflowStore {
   constructor(private readonly db: SqlClient) {}
 
   async createRun(input: CreateRunInput): Promise<WorkflowRun> {
+    const startAt = input.startAt ?? null;
+    const scheduled = startAt !== null && startAt.getTime() > Date.now();
     const { rows } = await this.db.query(
-      `INSERT INTO workflow_runs (id, workflow_name, input)
-       VALUES ($1, $2, $3::jsonb)
+      `INSERT INTO workflow_runs (id, workflow_name, input, status, wake_at)
+       VALUES ($1, $2, $3::jsonb, $4, $5::timestamptz)
        RETURNING ${RUN_COLUMNS}`,
-      [input.id, input.workflowName, JSON.stringify(input.input ?? null)],
+      [
+        input.id,
+        input.workflowName,
+        JSON.stringify(input.input ?? null),
+        scheduled ? "sleeping" : "pending",
+        scheduled ? startAt.toISOString() : null,
+      ],
     );
     await this.appendEvent(input.id, { type: "run_started", input: input.input ?? null });
     return mapRun(rows[0]);

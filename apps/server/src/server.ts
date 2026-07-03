@@ -8,7 +8,10 @@ export interface BuildServerOptions {
   logger?: boolean;
 }
 
-const startRunBody = z.object({ input: z.unknown().optional() });
+const startRunBody = z.object({
+  input: z.unknown().optional(),
+  startAt: z.iso.datetime({ offset: true }).optional(),
+});
 const signalBody = z.object({ payload: z.unknown().optional() });
 const listRunsQuery = z.object({
   status: z.enum(["pending", "running", "sleeping", "completed", "failed"]).optional(),
@@ -38,6 +41,7 @@ export function buildServer({ store, logger = false }: BuildServerOptions): Fast
       id: randomUUID(),
       workflowName: name,
       input: body.input ?? null,
+      startAt: body.startAt ? new Date(body.startAt) : undefined,
     });
     return reply.status(201).send(serializeRun(run));
   });
