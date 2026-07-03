@@ -33,7 +33,9 @@ export class ReplayContext implements WorkflowContext {
 
   private opCounter = 0;
   private cancelled = false;
+  private maxRecordedOpIndex = -1;
   private readonly ops = new Map<number, OpState>();
+  private readonly versions = new Map<string, number>();
   private readonly signalsByName = new Map<string, unknown[]>();
   private readonly signalCursor = new Map<string, number>();
   private readonly store: WorkflowStore;
@@ -94,6 +96,9 @@ export class ReplayContext implements WorkflowContext {
       case "run_cancelled":
         this.cancelled = true;
         break;
+      case "version_marked":
+        this.versions.set(event.changeId, event.version);
+        break;
       default:
         break;
     }
@@ -104,6 +109,9 @@ export class ReplayContext implements WorkflowContext {
     if (!state) {
       state = { failures: [] };
       this.ops.set(opIndex, state);
+    }
+    if (opIndex > this.maxRecordedOpIndex) {
+      this.maxRecordedOpIndex = opIndex;
     }
     return state;
   }
@@ -282,6 +290,24 @@ export class ReplayContext implements WorkflowContext {
       );
     }
     throw new Suspension(null);
+  }
+
+  async version(changeId: string, maxVersion: number): Promise<number> {
+    this.assertNotCancelled();
+
+    const recorded = this.versions.get(changeId);
+    if (recorded !== undefined) {
+      return recorded;
+    }
+
+    const replayingPastEvents = this.opCounter <= this.maxRecordedOpIndex;
+    if (replayingPastEvents) {
+      return 0;
+    }
+
+    this.versions.set(changeId, maxVersion);
+    await this.append({ type: "version_marked", changeId, version: maxVersion });
+    return maxVersion;
   }
 
   async waitForSignal<T = unknown>(name: string): Promise<T> {

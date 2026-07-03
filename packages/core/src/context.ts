@@ -23,4 +23,6 @@ export interface WorkflowContext {
   random(): Promise<number>;
 
   child<T = unknown>(workflowName: string, input?: unknown): Promise<T>;
+
+  version(changeId: string, maxVersion: number): Promise<number>;
 }

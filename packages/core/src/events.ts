@@ -18,6 +18,7 @@ export type HistoryEvent =
   | { type: "signal_received"; name: string; payload: unknown }
   | { type: "run_retried" }
   | { type: "run_cancelled" }
+  | { type: "version_marked"; changeId: string; version: number }
   | { type: "run_completed"; output: unknown }
   | { type: "run_failed"; error: string };
 
