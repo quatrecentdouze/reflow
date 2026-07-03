@@ -34,6 +34,13 @@ function worker(): Worker {
 }
 
 describe("REST API", () => {
+  it("serves the web ui at the root", async () => {
+    const res = await app.inject({ method: "GET", url: "/" });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/html");
+    expect(res.body).toContain("reflow");
+  });
+
   it("starts a run and exposes its state", async () => {
     const created = await app.inject({
       method: "POST",

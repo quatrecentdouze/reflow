@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { WorkflowStore } from "@reflow/core";
+import { INDEX_HTML } from "./ui.js";
 
 export interface BuildServerOptions {
   store: WorkflowStore;
@@ -33,6 +34,8 @@ export function buildServer({ store, logger = false }: BuildServerOptions): Fast
   });
 
   app.get("/health", async () => ({ status: "ok" }));
+
+  app.get("/", (_req, reply) => reply.type("text/html").send(INDEX_HTML));
 
   app.post("/api/workflows/:name/runs", async (req, reply) => {
     const { name } = req.params as { name: string };
