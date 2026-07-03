@@ -1,0 +1,25 @@
+{
+  "name": "reflow",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc -b",
+    "test": "pnpm build && vitest run",
+    "demo": "pnpm build && pnpm --filter @reflow/demo start"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.3",
+    "@reflow/core": "workspace:*",
+    "@reflow/sdk": "workspace:*",
+    "@reflow/server": "workspace:*",
+    "@reflow/store-postgres": "workspace:*",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  }
+}
