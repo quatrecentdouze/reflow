@@ -5,6 +5,7 @@ import {
   ChildWorkflowFailedError,
   NondeterminismError,
   StepFailedError,
+  WorkflowCancelledError,
   errorMessage,
 } from "../errors.js";
 import type { WorkflowStore } from "../store.js";
@@ -31,6 +32,7 @@ export class ReplayContext implements WorkflowContext {
   readonly runId: string;
 
   private opCounter = 0;
+  private cancelled = false;
   private readonly ops = new Map<number, OpState>();
   private readonly signalsByName = new Map<string, unknown[]>();
   private readonly signalCursor = new Map<string, number>();
@@ -89,6 +91,9 @@ export class ReplayContext implements WorkflowContext {
           if (!state.completion) state.failures = [];
         }
         break;
+      case "run_cancelled":
+        this.cancelled = true;
+        break;
       default:
         break;
     }
@@ -107,7 +112,12 @@ export class ReplayContext implements WorkflowContext {
     return this.store.appendEvent(this.runId, event);
   }
 
+  private assertNotCancelled(): void {
+    if (this.cancelled) throw new WorkflowCancelledError(this.runId);
+  }
+
   async step<T>(id: string, fn: () => Promise<T> | T, options?: StepOptions): Promise<T> {
+    this.assertNotCancelled();
     const opIndex = this.opCounter++;
     const op = this.ops.get(opIndex);
 
@@ -168,6 +178,7 @@ export class ReplayContext implements WorkflowContext {
   }
 
   async sleep(ms: number): Promise<void> {
+    this.assertNotCancelled();
     const opIndex = this.opCounter++;
     const op = this.ops.get(opIndex);
 
@@ -208,6 +219,7 @@ export class ReplayContext implements WorkflowContext {
     kind: "now" | "random",
     produce: () => unknown,
   ): Promise<unknown> {
+    this.assertNotCancelled();
     const opIndex = this.opCounter++;
     const op = this.ops.get(opIndex);
 
@@ -226,6 +238,7 @@ export class ReplayContext implements WorkflowContext {
   }
 
   async child<T = unknown>(workflowName: string, input: unknown = null): Promise<T> {
+    this.assertNotCancelled();
     const opIndex = this.opCounter++;
     const op = this.ops.get(opIndex);
 
@@ -261,13 +274,18 @@ export class ReplayContext implements WorkflowContext {
     if (child.status === "completed") {
       return child.output as T;
     }
-    if (child.status === "failed") {
-      throw new ChildWorkflowFailedError(workflowName, childRunId, child.error ?? "unknown error");
+    if (child.status === "failed" || child.status === "cancelled") {
+      throw new ChildWorkflowFailedError(
+        workflowName,
+        childRunId,
+        child.error ?? child.status,
+      );
     }
     throw new Suspension(null);
   }
 
   async waitForSignal<T = unknown>(name: string): Promise<T> {
+    this.assertNotCancelled();
     this.opCounter++;
     const received = this.signalsByName.get(name) ?? [];
     const cursor = this.signalCursor.get(name) ?? 0;

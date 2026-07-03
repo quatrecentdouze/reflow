@@ -201,6 +201,40 @@ export class PostgresStore implements WorkflowStore {
     return true;
   }
 
+  async cancelRun(runId: WorkflowRunId): Promise<boolean> {
+    const run = await this.getRun(runId);
+    if (!run || run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
+      return false;
+    }
+    await this.appendEvent(runId, { type: "run_cancelled" });
+    await this.db.query(
+      `UPDATE workflow_runs
+       SET status = CASE WHEN status IN ('pending', 'sleeping') THEN 'cancelled' ELSE status END,
+           wake_at = CASE WHEN status = 'running' THEN LEAST(COALESCE(wake_at, now()), now()) ELSE NULL END,
+           locked_by = CASE WHEN status IN ('pending', 'sleeping') THEN NULL ELSE locked_by END,
+           locked_until = CASE WHEN status IN ('pending', 'sleeping') THEN NULL ELSE locked_until END,
+           updated_at = now()
+       WHERE id = $1 AND status IN ('pending', 'sleeping', 'running')`,
+      [runId],
+    );
+    const updated = await this.getRun(runId);
+    if (updated?.status === "cancelled") {
+      await this.wakeParent(runId);
+    }
+    return true;
+  }
+
+  async markRunCancelled(runId: WorkflowRunId): Promise<void> {
+    await this.db.query(
+      `UPDATE workflow_runs
+       SET status = 'cancelled', wake_at = NULL,
+           locked_by = NULL, locked_until = NULL, updated_at = now()
+       WHERE id = $1`,
+      [runId],
+    );
+    await this.wakeParent(runId);
+  }
+
   async signalRun(
     runId: WorkflowRunId,
     name: string,

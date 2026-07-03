@@ -34,4 +34,8 @@ export interface WorkflowStore {
   signalRun(runId: WorkflowRunId, name: string, payload: unknown): Promise<boolean>;
 
   retryRun(runId: WorkflowRunId): Promise<boolean>;
+
+  cancelRun(runId: WorkflowRunId): Promise<boolean>;
+
+  markRunCancelled(runId: WorkflowRunId): Promise<void>;
 }

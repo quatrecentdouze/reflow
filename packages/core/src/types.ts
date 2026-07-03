@@ -5,7 +5,8 @@ export type WorkflowRunStatus =
   | "running"
   | "sleeping"
   | "completed"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export interface WorkflowRun {
   id: WorkflowRunId;

@@ -1,11 +1,11 @@
 import type { WorkflowRegistry } from "../definition.js";
-import { errorMessage } from "../errors.js";
+import { WorkflowCancelledError, errorMessage } from "../errors.js";
 import type { WorkflowStore } from "../store.js";
 import type { WorkflowRun } from "../types.js";
 import { ReplayContext } from "./replay-context.js";
 import { Suspension } from "./suspension.js";
 
-export type ExecutionOutcome = "completed" | "failed" | "suspended";
+export type ExecutionOutcome = "completed" | "failed" | "suspended" | "cancelled";
 
 export interface ExecutorDeps {
   store: WorkflowStore;
@@ -38,6 +38,10 @@ export async function executeClaimedRun(
     if (err instanceof Suspension) {
       await store.suspendRun(run.id, err.wakeAt);
       return "suspended";
+    }
+    if (err instanceof WorkflowCancelledError && err.runId === run.id) {
+      await store.markRunCancelled(run.id);
+      return "cancelled";
     }
     const message = errorMessage(err);
     await store.appendEvent(run.id, { type: "run_failed", error: message });

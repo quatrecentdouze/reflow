@@ -18,6 +18,14 @@ export class StepFailedError extends Error {
   }
 }
 
+export class WorkflowCancelledError extends Error {
+  override readonly name = "WorkflowCancelledError";
+
+  constructor(readonly runId: string) {
+    super(`run ${runId} was cancelled`);
+  }
+}
+
 export class ChildWorkflowFailedError extends Error {
   override readonly name = "ChildWorkflowFailedError";
 

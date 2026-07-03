@@ -25,6 +25,7 @@ h1 span{color:var(--accent)}
 .badge.sleeping{color:var(--yellow);border-color:var(--yellow)}
 .badge.completed{color:var(--green);border-color:var(--green)}
 .badge.failed{color:var(--red);border-color:var(--red)}
+.badge.cancelled{color:var(--muted);border-color:var(--muted);text-decoration:line-through}
 .event{padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:10px}
 .event .seq{color:var(--muted);min-width:26px}
 .event .type{min-width:130px}
@@ -34,6 +35,7 @@ h1 span{color:var(--accent)}
 .event .type.run_completed{color:var(--green)}
 .event .type.timer_started,.event .type.timer_fired{color:var(--yellow)}
 .event .type.signal_received{color:var(--purple)}
+.event .type.run_cancelled{color:var(--muted)}
 .event .type.child_started{color:var(--accent)}
 .event .detail{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 .empty{padding:20px 14px;color:var(--muted)}
@@ -86,6 +88,7 @@ async function loadRuns() {
     '<div class="run' + (r.id === selected ? " selected" : "") + '" data-id="' + r.id + '">' +
       '<span class="name">' + esc(r.workflowName) + '<br><span class="id">' + r.id + "</span></span>" +
       (r.status === "failed" ? '<button data-retry="' + r.id + '">retry</button>' : "") +
+      (["pending", "running", "sleeping"].includes(r.status) ? '<button data-cancel="' + r.id + '">cancel</button>' : "") +
       '<span class="badge ' + r.status + '">' + r.status + "</span>" +
     "</div>"
   ).join("");
@@ -114,6 +117,12 @@ document.getElementById("runs").addEventListener("click", async (e) => {
   const retryId = e.target.getAttribute && e.target.getAttribute("data-retry");
   if (retryId) {
     await fetch("/api/runs/" + retryId + "/retry", { method: "POST" });
+    await loadRuns();
+    return;
+  }
+  const cancelId = e.target.getAttribute && e.target.getAttribute("data-cancel");
+  if (cancelId) {
+    await fetch("/api/runs/" + cancelId + "/cancel", { method: "POST" });
     await loadRuns();
     return;
   }

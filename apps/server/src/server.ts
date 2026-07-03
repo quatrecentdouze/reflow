@@ -15,7 +15,9 @@ const startRunBody = z.object({
 });
 const signalBody = z.object({ payload: z.unknown().optional() });
 const listRunsQuery = z.object({
-  status: z.enum(["pending", "running", "sleeping", "completed", "failed"]).optional(),
+  status: z
+    .enum(["pending", "running", "sleeping", "completed", "failed", "cancelled"])
+    .optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 const getRunQuery = z.object({
@@ -87,6 +89,19 @@ export function buildServer({ store, logger = false }: BuildServerOptions): Fast
 
     await store.retryRun(id);
     return reply.status(202).send({ retried: true });
+  });
+
+  app.post("/api/runs/:id/cancel", async (req, reply) => {
+    const { id } = req.params as { id: string };
+
+    const run = await store.getRun(id);
+    if (!run) return reply.status(404).send({ error: "run not found" });
+
+    const cancelled = await store.cancelRun(id);
+    if (!cancelled) {
+      return reply.status(409).send({ error: "run already finished" });
+    }
+    return reply.status(202).send({ cancelled: true });
   });
 
   app.post("/api/runs/:id/signals/:name", async (req, reply) => {
